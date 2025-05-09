@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>PDF OCR with Enhanced Quality</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.13.216/pdf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.0.2/dist/tesseract.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <style>
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: #f1f1f1;
+      padding: 40px;
+      color: #333;
+      position: relative;
+    }
+
+    h2 {
+      margin-bottom: 20px;
+    }
+
+    #pdfInput {
+      margin-bottom: 30px;
+    }
+
+    #pdfPreview {
+      display: flex;
+      flex-direction: column;
+      gap: 50px;
+      align-items: center;
+    }
+
+    .page-container {
+      position: relative;
+      background: white;
+      padding: 20px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+      border-radius: 10px;
+      overflow: hidden;
+      max-width: 85%;
+    }
+
+    canvas {
+      display: block;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      max-width: 100%;
+    }
+
+    .ocr-text {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      right: 20px;
+      white-space: pre-wrap;
+      background: rgba(255, 255, 255, 0.8);
+      padding: 15px;
+      font-size: 14px;
+      line-height: 1.5;
+      color: #000;
+      pointer-events: auto;
+      border-radius: 6px;
+    }
+
+    .ocr-text span.red-bold {
+      color: red;
+      font-weight: bold;
+    }
+
+    #loading-overlay {
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      background: rgba(0,0,0,0.9);
+      color: #0ff;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+      font-size: 1.5rem;
+      font-weight: bold;
+      letter-spacing: 1px;
+      display: none;
+    }
+
+    .scan-line {
+      margin-top: 20px;
+      width: 80%;
+      height: 4px;
+      background: linear-gradient(90deg, transparent, #0ff, transparent);
+      animation: scan 2s infinite;
+    }
+
+    @keyframes scan {
+      0% { transform: translateX(-100%); opacity: 0; }
+      50% { transform: translateX(0); opacity: 1; }
+      100% { transform: translateX(100%); opacity: 0; }
+    }
+
+    button {
+      padding: 12px 24px;
+      background: linear-gradient(135deg, #007BFF, #00C6FF);
+      border: none;
+      border-radius: 8px;
+      color: white;
+      font-size: 16px;
+      font-weight: 500;
+      cursor: pointer;
+      box-shadow: 0 4px 15px rgba(0, 150, 255, 0.3);
+      transition: transform 0.2s ease, background 0.3s ease;
+    }
+
+    button:hover {
+      transform: translateY(-2px);
+      background: linear-gradient(135deg, #0056b3, #0096c7);
+    }
+
+    #downloadExcel {
+      display: none;
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      z-index: 1000;
+    }
+
+    .nav-button {
+      position: fixed;
+      top: 50%;
+      right: 10px;
+      transform: translateY(-50%);
+      background-color: rgba(0, 123, 255, 0.8);
+      padding: 10px 20px;
+      border-radius: 6px;
+      color: white;
+      cursor: pointer;
+      box-shadow: 0 4px 12px rgba(0, 123, 255, 0.4);
+      z-index: 1000;
+    }
+
+    .prev-button {
+      top: 45%;
+    }
+
+    .next-button {
+      top: 55%;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="loading-overlay">
+    Loading Document...
+    <div class="scan-line"></div>
+  </div>
+
+  <button id="downloadExcel">Download as Excel</button>
+  <h2>Upload Scanned PDF and Auto-Rotate Pages</h2>
+  <input type="file" id="pdfInput" accept="application/pdf">
+  <div id="pdfPreview"></div>
+
+  <button id="prevButton" class="nav-button prev-button">Previous Page</button>
+  <button id="nextButton" class="nav-button next-button">Next Page</button>
+
+  <script>
+    const pdfInput = document.getElementById('pdfInput');
+    const pdfPreview = document.getElementById('pdfPreview');
+    const loadingOverlay = document.getElementById('loading-overlay');
+    const downloadExcelBtn = document.getElementById('downloadExcel');
+    const prevButton = document.getElementById('prevButton');
+    const nextButton = document.getElementById('nextButton');
+    let currentPage = 1;
+    let totalPages = 0;
+    let pdf = null;
+    let allText = [];
+
+    pdfInput.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      pdfPreview.innerHTML = '';
+      loadingOverlay.style.display = 'flex';
+      downloadExcelBtn.style.display = 'none';
+
+      const fileReader = new FileReader();
+      fileReader.onload = async function () {
+        const typedarray = new Uint8Array(this.result);
+        pdf = await pdfjsLib.getDocument(typedarray).promise;
+        totalPages = pdf.numPages;
+        allText = new Array(totalPages);
+        const ocrPromises = [];
+
+        for (let i = 1; i <= totalPages; i++) {
+          const pageIndex = i;
+          const page = await pdf.getPage(pageIndex);
+          const rawViewport = page.getViewport({ scale: 3, rotation: 0 });
+          const isLandscape = rawViewport.width > rawViewport.height;
+          const rotation = isLandscape ? 270 : 0;
+          const viewport = page.getViewport({ scale: 3, rotation });
+
+          const container = document.createElement('div');
+          container.className = 'page-container';
+          container.style.width = (viewport.width + 40) + 'px';
+          container.style.height = (viewport.height + 40) + 'px';
+
+          const canvas = document.createElement('canvas');
+          canvas.width = viewport.width;
+          canvas.height = viewport.height;
+          const context = canvas.getContext('2d');
+
+          await page.render({ canvasContext: context, viewport }).promise;
+          const image = canvas.toDataURL('image/png');
+          pdfPreview.appendChild(container);
+          container.appendChild(canvas);
+
+          const ocrPromise = Tesseract.recognize(image, 'eng', {
+            logger: m => console.log(`Page ${pageIndex}:`, m.status, m.progress)
+          }).then(result => {
+            const text = result.data.text.trim();
+            allText[pageIndex - 1] = `--- Page ${pageIndex} ---\n${text}`;
+
+            const highlightedText = text.replace(/(\d[\d.,]*)/g, '<span class="red-bold">$1</span>');
+
+            const ocrDiv = document.createElement('div');
+            ocrDiv.className = 'ocr-text';
+            ocrDiv.contentEditable = true;
+            ocrDiv.innerHTML = highlightedText;
+            container.appendChild(ocrDiv);
+          });
+
+          ocrPromises.push(ocrPromise);
+        }
+
+        await Promise.all(ocrPromises);
+        showPage(currentPage);
+        loadingOverlay.style.display = 'none';
+        downloadExcelBtn.style.display = 'inline-block';
+
+        downloadExcelBtn.onclick = function () {
+          const wb = XLSX.utils.book_new();
+          const data = allText.map((text, index) => {
+            return [ `Page ${index + 1}`, text.replace(/\s+/g, ' ').substring(0, 32000) ];
+          });
+
+          const ws = XLSX.utils.aoa_to_sheet([["Page", "Text"]].concat(data));
+          XLSX.utils.book_append_sheet(wb, ws, "OCR Output");
+          XLSX.writeFile(wb, "Extracted_Text.xlsx");
+        };
+      };
+      fileReader.readAsArrayBuffer(file);
+    });
+
+    prevButton.addEventListener('click', () => {
+      if (currentPage > 1) {
+        currentPage--;
+        showPage(currentPage);
+      }
+    });
+
+    nextButton.addEventListener('click', () => {
+      if (currentPage < totalPages) {
+        currentPage++;
+        showPage(currentPage);
+      }
+    });
+
+    function showPage(pageNumber) {
+      const containers = pdfPreview.getElementsByClassName('page-container');
+      Array.from(containers).forEach((container, index) => {
+        if (index + 1 === pageNumber) {
+          container.style.display = 'block';
+        } else {
+          container.style.display = 'none';
+        }
+      });
+    }
+  </script>
+</body>
+</html>
