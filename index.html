@@ -1,0 +1,45 @@
+<!-- index.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Index Page</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 20px;
+      margin: 0;
+    }
+    #tableSection {
+      margin-top: 20px;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>Welcome to the Dashboard</h1>
+
+  <div id="tableSection">
+    <!-- table.html will be loaded here -->
+    <p>Loading table...</p>
+  </div>
+
+  <script>
+    fetch('table.html')
+      .then(response => {
+        if (!response.ok) {
+          throw new Error('Table failed to load.');
+        }
+        return response.text();
+      })
+      .then(html => {
+        document.getElementById('tableSection').innerHTML = html;
+      })
+      .catch(error => {
+        document.getElementById('tableSection').innerHTML = `<p style="color:red;">${error.message}</p>`;
+      });
+  </script>
+
+</body>
+</html>
